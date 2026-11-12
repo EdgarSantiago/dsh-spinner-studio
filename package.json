@@ -1,0 +1,18 @@
+{
+  "name": "@local/dsh-spinner-studio",
+  "version": "1.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Customize the DeepSeek Harness activity indicator with icons, original GIFs and editable spinner verbs.",
+  "license": "MIT",
+  "repository": { "type": "git", "url": "https://github.com/EdgarSantiago/dsh-spinner-studio.git" },
+  "homepage": "https://github.com/EdgarSantiago/dsh-spinner-studio#readme",
+  "bugs": { "url": "https://github.com/EdgarSantiago/dsh-spinner-studio/issues" },
+  "keywords": ["dsh-plugin", "deepseek-harness", "spinner", "activity-indicator", "ui", "personalization"],
+  "exports": { ".": "./index.js", "./client": "./client.js", "./icon": "./icon.svg", "./locale/*.json": "./locale/*.json" },
+  "files": ["index.js", "shared.js", "gif-presets.js", "service.js", "client.js", "assets/gifs/*.gif", "cordis.patch.yml", "icon.svg", "locale/*.json", "README.md", "LICENSE", "THIRD_PARTY.md"],
+  "dsh": { "bundle": { "patch": "./cordis.patch.yml" }, "client": { "platform": "web", "immediately": true, "inject": ["@deepseek-ai/dsh-client-ui-chat", "@deepseek-ai/dsh-client-ui-settings", "@deepseek-ai/dsh-client-locale"] } },
+  "engines": { "dsh": "0.2.2-rc.1 || 0.2.2-rc.2", "node": ">=24.11.0" },
+  "dependencies": { "@deepseek-ai/schemastery": "~3.19.0" },
+  "scripts": { "build": "node build.mjs", "check": "node --check index.js && node --check shared.js && node --check service.js && node --check gif-presets.js && node --check client-source.js && node --check client.js && node --check build.mjs", "test": "node --test tests/*.test.js" }
+}
