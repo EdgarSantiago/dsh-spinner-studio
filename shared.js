@@ -19,6 +19,27 @@ export const PATHS = Object.freeze({
   orbit: 'M20 12a8 8 0 1 1-8-8M9 4h3v3M4 15c-3 8 16 1 16-7M18 4v4h4',
   code: 'm8 6-6 6 6 6m8-12 6 6-6 6m-3-14-2 16'
 });
+const SPINNER_ERROR_MESSAGES = Object.freeze({
+  'Expected a settings object.':'invalidSettings', 'Unknown setting.':'unknownSetting',
+  'enabled must be boolean.':'invalidEnabled', 'Unknown icon.':'invalidIcon',
+  'Use an emoji or a short symbol (up to 32 characters).':'invalidEmoji',
+  'Use a PNG, JPEG, WebP or GIF up to 250 KiB.':'invalidImage', 'Choose an image first.':'imageRequired',
+  'Icon size must be 12–40 px.':'invalidSize', 'Rotation interval must be 2–60 seconds.':'invalidInterval',
+  'Use 1–500 verbs, with up to 80 characters per line.':'invalidVerbs',
+  'Expected an action.':'invalidAction', 'Unknown action.':'unknownAction',
+  'This profile cannot persist plugin settings.':'persistError',
+  'Expected application/json.':'invalidRequest', 'Empty request.':'invalidRequest', 'Invalid JSON request.':'invalidRequest', 'Request too large.':'requestTooLarge'
+});
+const SPINNER_ERROR_KEYS = new Set([...Object.values(SPINNER_ERROR_MESSAGES), 'imageError']);
+export function spinnerErrorKey(error, fallback = 'failed') {
+  if (SPINNER_ERROR_KEYS.has(error?.code)) return error.code;
+  return typeof error?.message === 'string' && Object.hasOwn(SPINNER_ERROR_MESSAGES, error.message) ? SPINNER_ERROR_MESSAGES[error.message] : fallback;
+}
+export function spinnerError(code, message) {
+  const error = new Error(message);
+  error.code = SPINNER_ERROR_KEYS.has(code) ? code : 'failed';
+  return error;
+}
 export function validatePreferences(input, base = DEFAULTS) {
   if (!input || typeof input !== 'object' || Array.isArray(input)) throw new Error('Expected a settings object.');
   if (Object.keys(input).some(key => !Object.hasOwn(DEFAULTS, key))) throw new Error('Unknown setting.');
@@ -56,12 +77,12 @@ export function durationLabel(milliseconds) {
 // no hashed host classes, observers, event scans, root replacement or DOM writes.
 // Theme Studio and the built-in themes expose their active accent here.
 export const SPINNER_ACCENT = 'var(--dsw-alias-state-business-primary)';
-export function spinnerCSS(p, verb, duration, portuguese) {
+export function spinnerCSS(p, verb, duration, portuguese, translatedLabel) {
   if (!p.enabled) return '';
   const root = '[data-chat-running]:not([data-holding])';
   const content = root + ' > span:last-child';
   const icon = content + ' > :first-child';
-  const label = `${verb}${duration ? (portuguese ? ' há ' : ' for ') + duration : ''} ···`;
+  const label = translatedLabel === undefined ? `${verb}${duration ? (portuguese ? ' há ' : ' for ') + duration : ''} ···` : `${translatedLabel} ···`;
   let css = `${root}{color:${SPINNER_ACCENT}!important}${content}{color:inherit!important}${content} > :last-child{display:none!important}${content}::after{content:${cssString(label)};white-space:pre-wrap;color:inherit;-webkit-text-fill-color:currentColor}${icon}{color:inherit!important;width:${p.size}px!important;height:${p.size}px!important;flex-shrink:0}`;
   if (p.icon !== 'native') {
     css += `${icon} > *{display:none!important}${icon}{display:inline-flex!important;align-items:center;justify-content:center;background:none!important;mask:none!important}`;

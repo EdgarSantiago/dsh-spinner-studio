@@ -1,4 +1,4 @@
-import { DEFAULTS, CLAUDE_VERBS, validatePreferences } from './shared.js';
+import { DEFAULTS, CLAUDE_VERBS, validatePreferences, spinnerError } from './shared.js';
 
 /** One operation boundary shared by the settings panel and the agent tool. */
 export function createSpinnerService(readPreferences, persistPreferences) {
@@ -43,5 +43,6 @@ export async function boundedJSON(request, limit = 380000) {
       chunks.push(value);
     }
   } finally { reader.releaseLock(); }
-  return JSON.parse(Buffer.concat(chunks).toString('utf8'));
+  try { return JSON.parse(Buffer.concat(chunks).toString('utf8')); }
+  catch { throw spinnerError('invalidRequest', 'Invalid JSON request.'); }
 }

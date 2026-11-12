@@ -1,6 +1,8 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync, existsSync } from 'node:fs';
+import { execFileSync } from 'node:child_process';
+import { fileURLToPath } from 'node:url';
 
 const root = new URL('../', import.meta.url);
 const read = path => readFileSync(new URL(path, root), 'utf8');
@@ -42,6 +44,23 @@ test('source-only README carries both install profiles, category, risks and real
   for (const profile of ['web', 'desktop']) assert.ok(text.includes(`dsh plugin --profile ${profile} add github:${repo}`));
   for (const term of ['UI & Experience', 'spinner_studio', 'profile', '179', '180', 'npm', 'https://dsh-plugin.org/submit']) assert.ok(text.includes(term), term);
   assert.ok(text.includes('{"icon":"native","size":18,"interval":6,"verbCount":180}'));
+});
+
+test('README screenshots are local PNGs and ship in the package', () => {
+  assert.ok(manifest.files.includes('docs/images/*.png'));
+  const readme = read('README.md');
+  assert.match(readme, /Activity indicator.*highlighted in red/);
+  const screenshots = ['spinner-studio-settings.png', 'spinner-studio-running.png'];
+  const [packed] = JSON.parse(execFileSync('npm', ['--cache','node_modules/.cache/npm','pack','--dry-run','--ignore-scripts','--json'], {cwd:fileURLToPath(root),encoding:'utf8',timeout:60000}));
+  const files = new Set(packed.files.map(file=>file.path));
+  for (const name of screenshots) {
+    const path = `docs/images/${name}`;
+    assert.ok(readme.includes(`](<${path}>)`), path);
+    assert.ok(files.has(path), path);
+    const bytes = readFileSync(new URL(path, root));
+    assert.deepEqual([...bytes.subarray(0,8)], [137,80,78,71,13,10,26,10], name);
+    assert.ok(bytes.readUInt32BE(16)>0 && bytes.readUInt32BE(20)>0, name);
+  }
 });
 
 test('original MIT and full source-verb notice are distributed without attribution loss', () => {

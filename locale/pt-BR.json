@@ -1,1 +1,6 @@
-{"meta":{"title":"Indicador de atividade","description":"Personalize o ícone de atividade e alterne entre 179 verbos do Claude Code."}}
+{
+  "meta": {
+    "title": "Indicador de atividade",
+    "description": "Personalize o ícone e os verbos padrão nos oito idiomas do Harness. Textos personalizados ficam como foram digitados. Preferências e imagens são salvas no perfil, sem chamadas ao modelo nem serviços externos."
+  }
+}

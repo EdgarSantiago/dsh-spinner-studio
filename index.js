@@ -1,5 +1,5 @@
 import z from '@deepseek-ai/schemastery';
-import { DEFAULTS, ICONS } from './shared.js';
+import { DEFAULTS, ICONS, spinnerErrorKey } from './shared.js';
 import { createSpinnerService, boundedJSON } from './service.js';
 
 export const Config = z.object({
@@ -56,7 +56,7 @@ export function apply(ctx, config) {
         const result = await service.operate(input);
         return Response.json(result, { headers: { 'Cache-Control': 'no-store' } });
       } catch (error) {
-        return Response.json({ error: error instanceof Error ? error.message : 'Unable to save settings.' }, { status: 400 });
+        return Response.json({ error: error instanceof Error ? error.message : 'Unable to save settings.', errorCode: spinnerErrorKey(error) }, { status: 400 });
       }
     }
   }));

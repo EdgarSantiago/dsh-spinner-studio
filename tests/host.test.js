@@ -45,6 +45,22 @@ test('HTTP panel and agent tool share success and failure semantics', async () =
     assert.equal((await m.tool.execute({action:'read'})).preferences.icon,'spark');
   } finally { await m.dispose(); }
 });
+test('HTTP failures include stable locale keys without changing the agent diagnostics', async () => {
+  const m = mount();
+  try {
+    const route = m.routes.get('/api/plugins/spinner-studio');
+    const response = await route.fetch(request({action:'update',patch:{size:0}}));
+    assert.equal(response.status,400);
+    assert.deepEqual(await response.json(), {error:'Icon size must be 12–40 px.',errorCode:'invalidSize'});
+    await assert.rejects(m.tool.execute({action:'update',patch:{size:0}}),/Icon size must be/);
+    const invalid = await route.fetch(new Request('http://localhost/api/plugins/spinner-studio',{method:'POST',headers:{'Content-Type':'application/json'},body:'{'}));
+    assert.equal(invalid.status,400);
+    assert.equal((await invalid.json()).errorCode,'invalidRequest');
+    m.fail();
+    const failed = await route.fetch(request({action:'update',patch:{icon:'spark'}}));
+    assert.equal((await failed.json()).errorCode,'failed');
+  } finally { await m.dispose(); }
+});
 test('SSE publishes accepted tool changes and cleans up on disconnect', async () => {
   const m = mount();
   const controller = new AbortController();

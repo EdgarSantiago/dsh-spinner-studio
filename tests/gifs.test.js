@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import { GIF_PRESETS, gifPresetFor, gifPresetPatch, validatePreferences, DEFAULTS, spinnerCSS } from '../shared.js';
 import { createSpinnerService } from '../service.js';
+import { SPINNER_LANGUAGES, SPINNER_TRANSLATIONS } from '../translations.js';
 
 test('four original animated GIFs and static posters ship locally within upload limits', async () => {
   assert.deepEqual(GIF_PRESETS.map(p => p.id), ['dots','orbit','bars','pulse']);
@@ -46,7 +47,8 @@ test('built-in GIF masks follow the palette and reduce motion; custom images ret
 });
 test('gallery controls are localized, keyboard buttons, and do not auto-save drafts', async () => {
   const source = await readFile(new URL('../client-source.js',import.meta.url),'utf8');
-  for (const id of ['dots','orbit','bars','pulse']) assert.ok(source.includes(`'gif.${id}'`));
+  for (const language of SPINNER_LANGUAGES) for (const id of ['dots','orbit','bars','pulse']) assert.ok(SPINNER_TRANSLATIONS[language]['gif.'+id]);
+  assert.ok(source.includes("t('gif.'+preset.id)"));
   assert.ok(source.includes("'aria-pressed':draft.icon==='image'&&draft.image===preset.image"));
   assert.ok(source.includes('update(gifPresetPatch(preset.id))'));
   assert.ok(source.includes('mask-image:var(--dss-gif-still)'));

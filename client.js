@@ -23,6 +23,27 @@ const PATHS = Object.freeze({
   orbit: 'M20 12a8 8 0 1 1-8-8M9 4h3v3M4 15c-3 8 16 1 16-7M18 4v4h4',
   code: 'm8 6-6 6 6 6m8-12 6 6-6 6m-3-14-2 16'
 });
+const SPINNER_ERROR_MESSAGES = Object.freeze({
+  'Expected a settings object.':'invalidSettings', 'Unknown setting.':'unknownSetting',
+  'enabled must be boolean.':'invalidEnabled', 'Unknown icon.':'invalidIcon',
+  'Use an emoji or a short symbol (up to 32 characters).':'invalidEmoji',
+  'Use a PNG, JPEG, WebP or GIF up to 250 KiB.':'invalidImage', 'Choose an image first.':'imageRequired',
+  'Icon size must be 12–40 px.':'invalidSize', 'Rotation interval must be 2–60 seconds.':'invalidInterval',
+  'Use 1–500 verbs, with up to 80 characters per line.':'invalidVerbs',
+  'Expected an action.':'invalidAction', 'Unknown action.':'unknownAction',
+  'This profile cannot persist plugin settings.':'persistError',
+  'Expected application/json.':'invalidRequest', 'Empty request.':'invalidRequest', 'Invalid JSON request.':'invalidRequest', 'Request too large.':'requestTooLarge'
+});
+const SPINNER_ERROR_KEYS = new Set([...Object.values(SPINNER_ERROR_MESSAGES), 'imageError']);
+function spinnerErrorKey(error, fallback = 'failed') {
+  if (SPINNER_ERROR_KEYS.has(error?.code)) return error.code;
+  return typeof error?.message === 'string' && Object.hasOwn(SPINNER_ERROR_MESSAGES, error.message) ? SPINNER_ERROR_MESSAGES[error.message] : fallback;
+}
+function spinnerError(code, message) {
+  const error = new Error(message);
+  error.code = SPINNER_ERROR_KEYS.has(code) ? code : 'failed';
+  return error;
+}
 function validatePreferences(input, base = DEFAULTS) {
   if (!input || typeof input !== 'object' || Array.isArray(input)) throw new Error('Expected a settings object.');
   if (Object.keys(input).some(key => !Object.hasOwn(DEFAULTS, key))) throw new Error('Unknown setting.');
@@ -60,12 +81,12 @@ function durationLabel(milliseconds) {
 // no hashed host classes, observers, event scans, root replacement or DOM writes.
 // Theme Studio and the built-in themes expose their active accent here.
 const SPINNER_ACCENT = 'var(--dsw-alias-state-business-primary)';
-function spinnerCSS(p, verb, duration, portuguese) {
+function spinnerCSS(p, verb, duration, portuguese, translatedLabel) {
   if (!p.enabled) return '';
   const root = '[data-chat-running]:not([data-holding])';
   const content = root + ' > span:last-child';
   const icon = content + ' > :first-child';
-  const label = `${verb}${duration ? (portuguese ? ' há ' : ' for ') + duration : ''} ···`;
+  const label = translatedLabel === undefined ? `${verb}${duration ? (portuguese ? ' há ' : ' for ') + duration : ''} ···` : `${translatedLabel} ···`;
   let css = `${root}{color:${SPINNER_ACCENT}!important}${content}{color:inherit!important}${content} > :last-child{display:none!important}${content}::after{content:${cssString(label)};white-space:pre-wrap;color:inherit;-webkit-text-fill-color:currentColor}${icon}{color:inherit!important;width:${p.size}px!important;height:${p.size}px!important;flex-shrink:0}`;
   if (p.icon !== 'native') {
     css += `${icon} > *{display:none!important}${icon}{display:inline-flex!important;align-items:center;justify-content:center;background:none!important;mask:none!important}`;
@@ -82,43 +103,336 @@ function spinnerCSS(p, verb, duration, portuguese) {
   return css;
 }
 
-function createPlugin(React) {
-  const h = React.createElement;
-  const NS = 'spinner-studio';
-  const PT = {
-    title:'Indicador de atividade', intro:'Personalize o ícone e as palavras exibidas enquanto o agente trabalha.',
-    enabled:'Personalização ativa', enabledHelp:'Desative para voltar ao indicador original do Harness.',
-    preview:'Prévia', icon:'Ícone', native:'Baleia original', spark:'Brilho', orbit:'Órbita', code:'Código', emoji:'Emoji', image:'Sua imagem',
-    symbol:'Emoji ou símbolo', upload:'Enviar imagem', uploadHelp:'PNG, JPEG, WebP ou GIF · até 250 KiB. A imagem fica salva neste perfil.',
-    size:'Tamanho do ícone', interval:'Trocar verbo a cada', seconds:'segundos', verbs:'Verbos', verbsHelp:'Um por linha. Os verbos da fonte foram mantidos em inglês; você pode escrever os seus em português.',
-    count:'{count} verbos', claude:'Repor verbos do Claude', defaults:'Restaurar padrões', save:'Salvar alterações', saving:'Salvando…', saved:'Alterações salvas.', cancel:'Descartar alterações',
-    loading:'Carregando configurações…', failed:'Não foi possível concluir.', retry:'Tentar novamente', imageError:'Escolha uma imagem válida de até 250 KiB.',
-    compatibility:'Adaptador visual para o indicador do chat principal no Harness 0.2.2-rc.1 / 0.2.2-rc.2. Não altera mensagens, ferramentas ou o histórico.',
-    source:'Fonte dos 179 verbos', live:'Em atividade', selectImage:'Envie uma imagem abaixo.', global:'As alterações são salvas no perfil e valem para todas as sessões.',
-    changed:'Há alterações não salvas.', unread:'Não foi possível carregar as configurações.',
-    gallery:'GIFs prontos', galleryHelp:'Escolha um exemplo e salve. Eles seguem a paleta e ficam estáticos quando reduzir movimento está ativado.',
-    'gif.dots':'Pontinhos', 'gif.orbit':'Órbita animada', 'gif.bars':'Equalizador', 'gif.pulse':'Estrela pulsante'
-  };
-  const EN = {
+// Native Harness locale catalogs. Technical names and user-authored text are not translated.
+const SPINNER_LANGUAGES = Object.freeze(['en', 'pt', 'zh', 'ja', 'es', 'fr', 'de', 'ru']);
+const SPINNER_TRANSLATIONS = {
+  en: {
     title:'Activity indicator', intro:'Customize the icon and words shown while the agent works.',
     enabled:'Customization enabled', enabledHelp:'Turn off to restore the original Harness indicator.',
     preview:'Preview', icon:'Icon', native:'Original whale', spark:'Spark', orbit:'Orbit', code:'Code', emoji:'Emoji', image:'Your image',
     symbol:'Emoji or symbol', upload:'Upload image', uploadHelp:'PNG, JPEG, WebP or GIF · up to 250 KiB. Images are saved in this profile.',
-    size:'Icon size', interval:'Rotate verb every', seconds:'seconds', verbs:'Verbs', verbsHelp:'One per line. Source verbs are in English; you can write your own in any language.',
-    count:'{count} verbs', claude:'Restore Claude verbs', defaults:'Restore defaults', save:'Save changes', saving:'Saving…', saved:'Changes saved.', cancel:'Discard changes',
+    size:'Icon size', interval:'Rotate verb every', seconds:'seconds', verbs:'Verbs', verbsHelp:'One per line. Built-in verbs follow the Harness language. Editing the list creates custom text that stays as entered.',
+    count:'{count} verbs', claude:'Restore built-in verbs', defaults:'Restore defaults', save:'Save changes', saving:'Saving…', saved:'Changes saved.', cancel:'Discard changes',
     loading:'Loading settings…', failed:'Could not complete the operation.', retry:'Try again', imageError:'Choose a valid image up to 250 KiB.',
     compatibility:'Visual adapter for the main chat indicator in Harness 0.2.2-rc.1 / 0.2.2-rc.2. Does not change messages, tools or history.',
     source:'Source of the 179 verbs', live:'Working', selectImage:'Upload an image below.', global:'Changes persist in the profile and apply to every session.',
-    changed:'You have unsaved changes.', unread:'Unable to load settings.',
-    gallery:'Ready-made GIFs', galleryHelp:'Choose a sample and save. Samples follow your palette and become still when reduced motion is enabled.',
-    'gif.dots':'Dancing dots', 'gif.orbit':'Animated orbit', 'gif.bars':'Equalizer', 'gif.pulse':'Pulsing star'
-  };
+    changed:'You have unsaved changes.', unread:'Unable to load settings.', gallery:'Ready-made GIFs', galleryHelp:'Choose a sample and save. Samples follow your palette and become still when reduced motion is enabled.',
+    'gif.dots':'Dancing dots', 'gif.orbit':'Animated orbit', 'gif.bars':'Equalizer', 'gif.pulse':'Pulsing star',
+    runningLabel:'{verb} for {duration}', invalidSettings:'Invalid settings.', unknownSetting:'An unknown setting was supplied.', invalidEnabled:'Choose whether customization is enabled.', invalidIcon:'Choose a supported icon.',
+    invalidEmoji:'Enter an emoji or symbol with up to 32 characters.', invalidImage:'Use a valid PNG, JPEG, WebP or GIF up to 250 KiB.', imageRequired:'Choose an image first.',
+    invalidSize:'Icon size must be between 12 and 40 pixels.', invalidInterval:'Choose an interval between 2 and 60 seconds.', invalidVerbs:'Use 1–500 nonempty single-line verbs, up to 80 characters each.',
+    invalidAction:'No valid action was supplied.', unknownAction:'This action is not supported.', persistError:'This profile could not save the settings.', invalidRequest:'The settings request is invalid.', requestTooLarge:'The settings request is too large.'
+  },
+  pt: {
+    title:'Indicador de atividade', intro:'Personalize o ícone e as palavras exibidas enquanto o agente trabalha.',
+    enabled:'Personalização ativa', enabledHelp:'Desative para voltar ao indicador original do Harness.',
+    preview:'Prévia', icon:'Ícone', native:'Baleia original', spark:'Brilho', orbit:'Órbita', code:'Código', emoji:'Emoji', image:'Sua imagem',
+    symbol:'Emoji ou símbolo', upload:'Enviar imagem', uploadHelp:'PNG, JPEG, WebP ou GIF · até 250 KiB. A imagem fica salva neste perfil.',
+    size:'Tamanho do ícone', interval:'Trocar verbo a cada', seconds:'segundos', verbs:'Verbos', verbsHelp:'Um por linha. Os verbos padrão seguem o idioma do Harness. Ao editar a lista, o texto personalizado fica como foi digitado.',
+    count:'{count} verbos', claude:'Restaurar verbos padrão', defaults:'Restaurar padrões', save:'Salvar alterações', saving:'Salvando…', saved:'Alterações salvas.', cancel:'Descartar alterações',
+    loading:'Carregando configurações…', failed:'Não foi possível concluir a operação.', retry:'Tentar novamente', imageError:'Escolha uma imagem válida de até 250 KiB.',
+    compatibility:'Adaptador visual para o indicador do chat principal no Harness 0.2.2-rc.1 / 0.2.2-rc.2. Não altera mensagens, ferramentas ou o histórico.',
+    source:'Fonte dos 179 verbos', live:'Em atividade', selectImage:'Envie uma imagem abaixo.', global:'As alterações são salvas no perfil e valem para todas as sessões.',
+    changed:'Há alterações não salvas.', unread:'Não foi possível carregar as configurações.', gallery:'GIFs prontos', galleryHelp:'Escolha um exemplo e salve. Eles seguem a paleta e ficam estáticos quando reduzir movimento está ativado.',
+    'gif.dots':'Pontinhos', 'gif.orbit':'Órbita animada', 'gif.bars':'Equalizador', 'gif.pulse':'Estrela pulsante',
+    runningLabel:'{verb} há {duration}', invalidSettings:'Configurações inválidas.', unknownSetting:'Foi informada uma configuração desconhecida.', invalidEnabled:'Escolha se a personalização deve ficar ativa.', invalidIcon:'Escolha um ícone compatível.',
+    invalidEmoji:'Informe um emoji ou símbolo com até 32 caracteres.', invalidImage:'Use uma imagem PNG, JPEG, WebP ou GIF válida de até 250 KiB.', imageRequired:'Escolha uma imagem primeiro.',
+    invalidSize:'O ícone deve ter entre 12 e 40 pixels.', invalidInterval:'Escolha um intervalo entre 2 e 60 segundos.', invalidVerbs:'Use de 1 a 500 verbos, um por linha, sem linhas vazias e com até 80 caracteres cada.',
+    invalidAction:'Nenhuma ação válida foi informada.', unknownAction:'Esta ação não é compatível.', persistError:'Este perfil não conseguiu salvar as configurações.', invalidRequest:'A solicitação de configurações é inválida.', requestTooLarge:'A solicitação de configurações é grande demais.'
+  },
+  zh: {
+    title:'活动指示器', intro:'自定义智能体工作时显示的图标和文字。', enabled:'启用自定义', enabledHelp:'关闭后恢复 Harness 原生指示器。',
+    preview:'预览', icon:'图标', native:'原生鲸鱼', spark:'火花', orbit:'轨道', code:'代码', emoji:'表情符号', image:'自选图片',
+    symbol:'表情或符号', upload:'上传图片', uploadHelp:'PNG、JPEG、WebP 或 GIF，最大 250 KiB。图片保存在此配置中。',
+    size:'图标大小', interval:'动词切换间隔', seconds:'秒', verbs:'动词', verbsHelp:'每行一个。内置动词随 Harness 语言变化；编辑后的自定义文字保持原样。',
+    count:'{count} 个动词', claude:'恢复内置动词', defaults:'恢复默认设置', save:'保存更改', saving:'正在保存…', saved:'更改已保存。', cancel:'放弃更改',
+    loading:'正在加载设置…', failed:'无法完成操作。', retry:'重试', imageError:'请选择不超过 250 KiB 的有效图片。',
+    compatibility:'适用于 Harness 0.2.2-rc.1 / 0.2.2-rc.2 主聊天指示器的视觉适配器，不会修改消息、工具或历史记录。',
+    source:'179 个动词的来源', live:'工作中', selectImage:'请在下方上传图片。', global:'更改保存在配置中，对所有会话生效。',
+    changed:'有未保存的更改。', unread:'无法加载设置。', gallery:'内置 GIF', galleryHelp:'选择示例并保存。示例跟随配色，在启用减少动态效果时显示静态图片。',
+    'gif.dots':'跳动圆点', 'gif.orbit':'动态轨道', 'gif.bars':'均衡器', 'gif.pulse':'脉动星光',
+    runningLabel:'{verb} · 已用 {duration}', invalidSettings:'设置无效。', unknownSetting:'提供了未知设置。', invalidEnabled:'请选择是否启用自定义。', invalidIcon:'请选择支持的图标。',
+    invalidEmoji:'请输入不超过 32 个字符的表情或符号。', invalidImage:'请使用不超过 250 KiB 的有效 PNG、JPEG、WebP 或 GIF。', imageRequired:'请先选择图片。',
+    invalidSize:'图标大小必须在 12 至 40 像素之间。', invalidInterval:'请选择 2 至 60 秒的间隔。', invalidVerbs:'请输入 1 至 500 个非空动词，每行一个，每个不超过 80 个字符。',
+    invalidAction:'未提供有效操作。', unknownAction:'不支持此操作。', persistError:'此配置无法保存设置。', invalidRequest:'设置请求无效。', requestTooLarge:'设置请求过大。'
+  },
+  ja: {
+    title:'動作インジケーター', intro:'エージェントの作業中に表示するアイコンと文字をカスタマイズします。', enabled:'カスタマイズを有効にする', enabledHelp:'オフにすると Harness 標準の表示に戻ります。',
+    preview:'プレビュー', icon:'アイコン', native:'標準のクジラ', spark:'きらめき', orbit:'軌道', code:'コード', emoji:'絵文字', image:'自分の画像',
+    symbol:'絵文字または記号', upload:'画像をアップロード', uploadHelp:'PNG、JPEG、WebP、GIF、最大 250 KiB。画像はこのプロファイルに保存されます。',
+    size:'アイコンのサイズ', interval:'動詞の切り替え間隔', seconds:'秒', verbs:'動詞', verbsHelp:'1 行に 1 つ入力します。標準の動詞は Harness の言語に従い、編集した文字は入力したまま保持されます。',
+    count:'動詞 {count} 個', claude:'標準の動詞に戻す', defaults:'既定値に戻す', save:'変更を保存', saving:'保存中…', saved:'変更を保存しました。', cancel:'変更を破棄',
+    loading:'設定を読み込み中…', failed:'操作を完了できませんでした。', retry:'再試行', imageError:'250 KiB 以下の有効な画像を選んでください。',
+    compatibility:'Harness 0.2.2-rc.1 / 0.2.2-rc.2 のメインチャット表示用アダプターです。メッセージ、ツール、履歴は変更しません。',
+    source:'179 個の動詞の出典', live:'作業中', selectImage:'下から画像をアップロードしてください。', global:'変更はプロファイルに保存され、すべてのセッションに適用されます。',
+    changed:'未保存の変更があります。', unread:'設定を読み込めません。', gallery:'用意済みの GIF', galleryHelp:'サンプルを選んで保存します。配色に従い、動きを減らす設定では静止画になります。',
+    'gif.dots':'動くドット', 'gif.orbit':'動く軌道', 'gif.bars':'イコライザー', 'gif.pulse':'脈動する星',
+    runningLabel:'{verb} · 経過 {duration}', invalidSettings:'設定が無効です。', unknownSetting:'不明な設定が指定されました。', invalidEnabled:'カスタマイズを有効にするか選んでください。', invalidIcon:'対応するアイコンを選んでください。',
+    invalidEmoji:'32 文字以内の絵文字または記号を入力してください。', invalidImage:'250 KiB 以下の有効な PNG、JPEG、WebP、GIF を使ってください。', imageRequired:'先に画像を選んでください。',
+    invalidSize:'アイコンのサイズは 12～40 ピクセルにしてください。', invalidInterval:'間隔は 2～60 秒にしてください。', invalidVerbs:'空でない動詞を 1～500 個、1 行に 1 つ、各 80 文字以内で入力してください。',
+    invalidAction:'有効な操作が指定されていません。', unknownAction:'この操作には対応していません。', persistError:'このプロファイルでは設定を保存できませんでした。', invalidRequest:'設定リクエストが無効です。', requestTooLarge:'設定リクエストが大きすぎます。'
+  },
+  es: {
+    title:'Indicador de actividad', intro:'Personaliza el icono y las palabras que aparecen mientras trabaja el agente.', enabled:'Personalización activada', enabledHelp:'Desactívala para recuperar el indicador original de Harness.',
+    preview:'Vista previa', icon:'Icono', native:'Ballena original', spark:'Destello', orbit:'Órbita', code:'Código', emoji:'Emoji', image:'Tu imagen',
+    symbol:'Emoji o símbolo', upload:'Subir imagen', uploadHelp:'PNG, JPEG, WebP o GIF · hasta 250 KiB. La imagen se guarda en este perfil.',
+    size:'Tamaño del icono', interval:'Cambiar verbo cada', seconds:'segundos', verbs:'Verbos', verbsHelp:'Uno por línea. Los verbos integrados siguen el idioma de Harness. Al editar la lista, el texto personalizado se conserva tal como lo escribes.',
+    count:'{count} verbos', claude:'Restaurar verbos integrados', defaults:'Restaurar valores predeterminados', save:'Guardar cambios', saving:'Guardando…', saved:'Cambios guardados.', cancel:'Descartar cambios',
+    loading:'Cargando ajustes…', failed:'No se pudo completar la operación.', retry:'Reintentar', imageError:'Elige una imagen válida de hasta 250 KiB.',
+    compatibility:'Adaptador visual para el indicador del chat principal de Harness 0.2.2-rc.1 / 0.2.2-rc.2. No modifica mensajes, herramientas ni historial.',
+    source:'Fuente de los 179 verbos', live:'Trabajando', selectImage:'Sube una imagen abajo.', global:'Los cambios se guardan en el perfil y se aplican a todas las sesiones.',
+    changed:'Hay cambios sin guardar.', unread:'No se pudieron cargar los ajustes.', gallery:'GIFs incluidos', galleryHelp:'Elige un ejemplo y guarda. Siguen la paleta y se muestran estáticos al reducir el movimiento.',
+    'gif.dots':'Puntos animados', 'gif.orbit':'Órbita animada', 'gif.bars':'Ecualizador', 'gif.pulse':'Estrella pulsante',
+    runningLabel:'{verb} desde hace {duration}', invalidSettings:'Ajustes no válidos.', unknownSetting:'Se ha indicado un ajuste desconocido.', invalidEnabled:'Elige si quieres activar la personalización.', invalidIcon:'Elige un icono compatible.',
+    invalidEmoji:'Introduce un emoji o símbolo de hasta 32 caracteres.', invalidImage:'Usa un PNG, JPEG, WebP o GIF válido de hasta 250 KiB.', imageRequired:'Primero elige una imagen.',
+    invalidSize:'El icono debe medir entre 12 y 40 píxeles.', invalidInterval:'Elige un intervalo de entre 2 y 60 segundos.', invalidVerbs:'Usa entre 1 y 500 verbos no vacíos, uno por línea y de hasta 80 caracteres cada uno.',
+    invalidAction:'No se ha indicado una acción válida.', unknownAction:'Esta acción no es compatible.', persistError:'Este perfil no pudo guardar los ajustes.', invalidRequest:'La solicitud de ajustes no es válida.', requestTooLarge:'La solicitud de ajustes es demasiado grande.'
+  },
+  fr: {
+    title:'Indicateur d’activité', intro:'Personnalisez l’icône et les mots affichés pendant que l’agent travaille.', enabled:'Personnalisation activée', enabledHelp:'Désactivez-la pour retrouver l’indicateur d’origine de Harness.',
+    preview:'Aperçu', icon:'Icône', native:'Baleine d’origine', spark:'Étincelle', orbit:'Orbite', code:'Code', emoji:'Émoji', image:'Votre image',
+    symbol:'Émoji ou symbole', upload:'Importer une image', uploadHelp:'PNG, JPEG, WebP ou GIF · 250 KiB maximum. L’image est enregistrée dans ce profil.',
+    size:'Taille de l’icône', interval:'Changer de verbe toutes les', seconds:'secondes', verbs:'Verbes', verbsHelp:'Un par ligne. Les verbes intégrés suivent la langue de Harness. Toute liste modifiée reste telle que vous l’avez saisie.',
+    count:'{count} verbes', claude:'Rétablir les verbes intégrés', defaults:'Rétablir les valeurs par défaut', save:'Enregistrer les modifications', saving:'Enregistrement…', saved:'Modifications enregistrées.', cancel:'Annuler les modifications',
+    loading:'Chargement des paramètres…', failed:'Impossible de terminer l’opération.', retry:'Réessayer', imageError:'Choisissez une image valide de 250 KiB maximum.',
+    compatibility:'Adaptateur visuel pour l’indicateur du chat principal de Harness 0.2.2-rc.1 / 0.2.2-rc.2. Ne modifie ni messages, ni outils, ni historique.',
+    source:'Source des 179 verbes', live:'En cours', selectImage:'Importez une image ci-dessous.', global:'Les modifications sont enregistrées dans le profil et s’appliquent à toutes les sessions.',
+    changed:'Des modifications ne sont pas enregistrées.', unread:'Impossible de charger les paramètres.', gallery:'GIFs intégrés', galleryHelp:'Choisissez un exemple et enregistrez. Ils suivent la palette et restent fixes lorsque les animations sont réduites.',
+    'gif.dots':'Points animés', 'gif.orbit':'Orbite animée', 'gif.bars':'Égaliseur', 'gif.pulse':'Étoile pulsante',
+    runningLabel:'{verb} depuis {duration}', invalidSettings:'Paramètres non valides.', unknownSetting:'Un paramètre inconnu a été fourni.', invalidEnabled:'Choisissez si la personnalisation doit être activée.', invalidIcon:'Choisissez une icône prise en charge.',
+    invalidEmoji:'Saisissez un émoji ou symbole de 32 caractères maximum.', invalidImage:'Utilisez un PNG, JPEG, WebP ou GIF valide de 250 KiB maximum.', imageRequired:'Choisissez d’abord une image.',
+    invalidSize:'L’icône doit mesurer entre 12 et 40 pixels.', invalidInterval:'Choisissez un intervalle de 2 à 60 secondes.', invalidVerbs:'Utilisez 1 à 500 verbes non vides, un par ligne, de 80 caractères maximum chacun.',
+    invalidAction:'Aucune action valide n’a été fournie.', unknownAction:'Cette action n’est pas prise en charge.', persistError:'Ce profil n’a pas pu enregistrer les paramètres.', invalidRequest:'La demande de paramètres n’est pas valide.', requestTooLarge:'La demande de paramètres est trop volumineuse.'
+  },
+  de: {
+    title:'Aktivitätsanzeige', intro:'Passe das Symbol und die Wörter an, die während der Arbeit des Agenten erscheinen.', enabled:'Anpassung aktiviert', enabledHelp:'Ausschalten, um die ursprüngliche Harness-Anzeige wiederherzustellen.',
+    preview:'Vorschau', icon:'Symbol', native:'Ursprünglicher Wal', spark:'Funke', orbit:'Umlaufbahn', code:'Code', emoji:'Emoji', image:'Eigenes Bild',
+    symbol:'Emoji oder Symbol', upload:'Bild hochladen', uploadHelp:'PNG, JPEG, WebP oder GIF · höchstens 250 KiB. Das Bild wird in diesem Profil gespeichert.',
+    size:'Symbolgröße', interval:'Verb wechseln alle', seconds:'Sekunden', verbs:'Verben', verbsHelp:'Ein Verb pro Zeile. Integrierte Verben folgen der Harness-Sprache. Bearbeitete Listen bleiben genau so, wie du sie eingibst.',
+    count:'{count} Verben', claude:'Integrierte Verben wiederherstellen', defaults:'Standardwerte wiederherstellen', save:'Änderungen speichern', saving:'Wird gespeichert…', saved:'Änderungen gespeichert.', cancel:'Änderungen verwerfen',
+    loading:'Einstellungen werden geladen…', failed:'Der Vorgang konnte nicht abgeschlossen werden.', retry:'Erneut versuchen', imageError:'Wähle ein gültiges Bild mit höchstens 250 KiB.',
+    compatibility:'Visueller Adapter für die Hauptchat-Anzeige in Harness 0.2.2-rc.1 / 0.2.2-rc.2. Ändert keine Nachrichten, Werkzeuge oder Verläufe.',
+    source:'Quelle der 179 Verben', live:'In Arbeit', selectImage:'Lade unten ein Bild hoch.', global:'Änderungen werden im Profil gespeichert und gelten für alle Sitzungen.',
+    changed:'Es gibt ungespeicherte Änderungen.', unread:'Die Einstellungen konnten nicht geladen werden.', gallery:'Integrierte GIFs', galleryHelp:'Wähle ein Beispiel und speichere es. Sie folgen der Farbpalette und werden bei reduzierter Bewegung statisch angezeigt.',
+    'gif.dots':'Tanzende Punkte', 'gif.orbit':'Animierte Umlaufbahn', 'gif.bars':'Equalizer', 'gif.pulse':'Pulsierender Stern',
+    runningLabel:'{verb} · {duration}', invalidSettings:'Ungültige Einstellungen.', unknownSetting:'Eine unbekannte Einstellung wurde übergeben.', invalidEnabled:'Wähle, ob die Anpassung aktiviert sein soll.', invalidIcon:'Wähle ein unterstütztes Symbol.',
+    invalidEmoji:'Gib ein Emoji oder Symbol mit höchstens 32 Zeichen ein.', invalidImage:'Verwende ein gültiges PNG, JPEG, WebP oder GIF mit höchstens 250 KiB.', imageRequired:'Wähle zuerst ein Bild.',
+    invalidSize:'Das Symbol muss zwischen 12 und 40 Pixel groß sein.', invalidInterval:'Wähle ein Intervall zwischen 2 und 60 Sekunden.', invalidVerbs:'Verwende 1–500 nicht leere Verben mit jeweils höchstens 80 Zeichen, eines pro Zeile.',
+    invalidAction:'Es wurde keine gültige Aktion angegeben.', unknownAction:'Diese Aktion wird nicht unterstützt.', persistError:'Dieses Profil konnte die Einstellungen nicht speichern.', invalidRequest:'Die Einstellungsanfrage ist ungültig.', requestTooLarge:'Die Einstellungsanfrage ist zu groß.'
+  },
+  ru: {
+    title:'Индикатор активности', intro:'Настройте значок и слова, которые отображаются во время работы агента.', enabled:'Настройка включена', enabledHelp:'Выключите, чтобы вернуть стандартный индикатор Harness.',
+    preview:'Предпросмотр', icon:'Значок', native:'Стандартный кит', spark:'Искра', orbit:'Орбита', code:'Код', emoji:'Эмодзи', image:'Своё изображение',
+    symbol:'Эмодзи или символ', upload:'Загрузить изображение', uploadHelp:'PNG, JPEG, WebP или GIF · до 250 КиБ. Изображение сохраняется в этом профиле.',
+    size:'Размер значка', interval:'Сменять глагол каждые', seconds:'сек.', verbs:'Глаголы', verbsHelp:'По одному в строке. Встроенные глаголы следуют языку Harness. Изменённый список сохраняется в том виде, в котором вы его ввели.',
+    count:'Глаголов: {count}', claude:'Восстановить встроенные глаголы', defaults:'Вернуть настройки по умолчанию', save:'Сохранить изменения', saving:'Сохранение…', saved:'Изменения сохранены.', cancel:'Отменить изменения',
+    loading:'Загрузка настроек…', failed:'Не удалось завершить операцию.', retry:'Повторить', imageError:'Выберите допустимое изображение размером до 250 КиБ.',
+    compatibility:'Визуальный адаптер индикатора основного чата Harness 0.2.2-rc.1 / 0.2.2-rc.2. Не изменяет сообщения, инструменты или историю.',
+    source:'Источник 179 глаголов', live:'В работе', selectImage:'Загрузите изображение ниже.', global:'Изменения сохраняются в профиле и применяются ко всем сеансам.',
+    changed:'Есть несохранённые изменения.', unread:'Не удалось загрузить настройки.', gallery:'Готовые GIF', galleryHelp:'Выберите пример и сохраните. Цвета следуют палитре; при уменьшении движения показывается неподвижный кадр.',
+    'gif.dots':'Прыгающие точки', 'gif.orbit':'Анимированная орбита', 'gif.bars':'Эквалайзер', 'gif.pulse':'Пульсирующая звезда',
+    runningLabel:'{verb} · {duration}', invalidSettings:'Недопустимые настройки.', unknownSetting:'Передан неизвестный параметр.', invalidEnabled:'Выберите, включать ли настройку индикатора.', invalidIcon:'Выберите поддерживаемый значок.',
+    invalidEmoji:'Введите эмодзи или символ длиной до 32 знаков.', invalidImage:'Используйте допустимый PNG, JPEG, WebP или GIF размером до 250 КиБ.', imageRequired:'Сначала выберите изображение.',
+    invalidSize:'Размер значка должен быть от 12 до 40 пикселей.', invalidInterval:'Выберите интервал от 2 до 60 секунд.', invalidVerbs:'Укажите от 1 до 500 непустых глаголов, по одному в строке, до 80 знаков каждый.',
+    invalidAction:'Допустимое действие не указано.', unknownAction:'Это действие не поддерживается.', persistError:'Не удалось сохранить настройки в этом профиле.', invalidRequest:'Недопустимый запрос настроек.', requestTooLarge:'Запрос настроек слишком большой.'
+  }
+};
+SPINNER_TRANSLATIONS['pt-BR'] = SPINNER_TRANSLATIONS.pt;
+
+// Display-only translations of the built-in list, in the canonical DEFAULTS.verbs order.
+// Custom lists are never machine-translated or rewritten. Original source attribution remains in THIRD_PARTY.md.
+const words = text => Object.freeze(text.trim().split('|').map(word => word.trim()));
+const SPINNER_VERBS = {
+  pt: words(`
+Mergulhando fundo|Concluindo|Agindo|Concretizando|Arquitetando|Assando|Irradiando|Dançando bebop|Intrigando|Ondulando|
+Escaldando|Discursando|Dançando|Inventando moda|Dando um toque|Preparando a base|Preparando a mistura|Fazendo pãezinhos|Escavando|Calculando|
+Fazendo carinho|Caramelizando|Fluindo em cascata|Catapultando|Raciocinando|Canalizando|Sintonizando|Coreografando|Agitando|Criando ideias|
+Convergindo|Refletindo|Organizando as ideias|Compondo|Computando|Elaborando|Considerando|Contemplando|Cozinhando|Dando forma|
+Criando|Processando os números|Cristalizando|Cultivando|Decifrando|Ponderando|Determinando|Enrolando um pouquinho|Desarrumando as ideias|Fazendo|
+Rabiscando|Chuviscando|Recuando|Produzindo efeito|Esclarecendo|Embelezando|Encantando|Visualizando|Evaporando|Fermentando|
+Mexendo aqui e ali|Dando um jeitinho|Flambando|Tagarelando|Fluindo|Quebrando a cabeça|Esvoaçando|Forjando|Formando|Brincando|
+Colocando cobertura|Passeando por aí|Galopando|Decorando|Gerando|Gesticulando|Germinando|Versionando|Entrando no ritmo|Soprando|
+Harmonizando|Calculando hashes|Chocando ideias|Reunindo o rebanho|Buzinando|Fazendo alvoroço|Cruzando o hiperespaço|Tendo ideias|Imaginando|Improvisando|
+Incubando|Inferindo|Infundindo|Ionizando|Dançando swing|Levitando|Curtindo sem pressa|Manifestando|Marinando|Serpenteando|
+Metamorfoseando|Formando névoa|Dançando de costas|Caminhando sem pressa|Matutando|Reunindo forças|Meditando|Nebulizando|Fazendo um ninho|Folheando o jornal|
+Explorando ideias|Formando um núcleo|Orbitando|Orquestrando|Absorvendo por osmose|Dando uma volta|Filtrando|Examinando|Filosofando|Fazendo fotossíntese|
+Polinizando|Pensando com calma|Discorrendo|Dando o bote|Precipitando|Fazendo mágica|Processando|Revisando|Propagando|Fazendo pequenos ajustes|
+Desvendando o enigma|Explorando o mundo quântico|Fazendo brilhar|Dando um toque especial|Reorganizando as ideias|Tecendo conexões|Pousando no poleiro|Ruminando|Salteando|Correndo de leve|
+Carregando as coisas|Correndo de um lado para o outro|Esboçando|Deslizando|Amassando|Dançando no salão|Explorando cavernas|Girando|Brotando|Cozinhando em fogo baixo|
+Sublimando|Rodopiando|Mergulhando em voo|Criando simbiose|Sintetizando|Temperando|Pensando|Trovejando|Experimentando|Fazendo travessuras|
+Virando tudo de ponta-cabeça|Transfigurando|Transmutando|Retorcendo|Oscilando|Desenrolando|Desembaraçando|Curtindo o clima|Caminhando como um pato|Vagando|
+Dobrando o espaço|Mexendo no tal negócio|Formando um redemoinho|Zumbindo|Batendo a mistura|Balançando|Trabalhando|Domando a confusão|Dando mais sabor|Ziguezagueando
+`),
+  zh: words(`
+深入探索|完成任务|付诸行动|实现构想|设计架构|烘焙中|绽放光芒|跳着爵士舞|琢磨难题|翻涌中|
+焯煮中|畅谈中|舞动中|忙着新花样|轻轻一点|搭建基础|酝酿中|制作小面包|挖掘中|计算中|
+亲切互动|熬制焦糖|倾泻而下|蓄势弹射|动脑思考|引导思路|调频共鸣|编排舞步|搅动中|激发灵感|
+汇聚中|深入思索|理清思路|创作中|运算中|构思方案|斟酌中|静心思考|烹饪中|精心打磨|
+创造中|处理数据|凝结成形|培育中|解读中|仔细权衡|确定方向|稍作盘桓|打乱思路|执行中|
+随手涂画|细雨飘落|渐渐退潮|推动变化|阐明中|润饰中|施展魅力|描绘愿景|蒸发中|发酵中|
+摆弄细节|巧妙周旋|焰烤中|轻快闲谈|流动中|破解困惑|翩然振翅|锻造中|塑形中|欢快嬉戏|
+铺上糖霜|四处游逛|奔腾中|点缀中|生成中|比划中|萌芽中|整理版本|跟随节奏|阵风吹拂|
+协调中|计算哈希|孵化点子|聚拢队伍|鸣笛中|热闹一番|穿越超空间|激发创意|想象中|即兴发挥|
+孵育中|推断中|注入活力|电离中|跳着摇摆舞|悬浮中|悠闲小憩|显现中|腌渍中|蜿蜒前行|
+蜕变中|薄雾升起|滑着太空步|从容漫步|反复琢磨|集结力量|沉思中|雾化中|筑巢中|翻阅报纸|
+探索想法|凝聚核心|环绕运行|统筹编排|慢慢吸收|漫步中|渗滤中|细细研读|探讨哲理|进行光合作用|
+传播花粉|仔细思量|畅论观点|伺机跃起|凝结降落|施展魔术|处理中|校对中|传播中|细心修整|
+解开谜题|探索量子世界|绚丽呈现|增添亮点|重新梳理|编织网络|栖息中|反复推敲|翻炒中|轻快奔跑|
+搬运中|匆匆穿梭|绘制草图|滑行中|揉合中|跳着舞步|探索洞穴|旋转中|破土萌发|小火慢炖|
+升华中|回旋中|俯冲中|协同共生|综合整理|调和中|思考中|雷声滚滚|动手试验|俏皮尝试|
+翻转思路|改头换面|转化中|扭转中|起伏中|徐徐展开|解开线索|感受氛围|摇摆迈步|随意探索|
+弯曲空间|摆弄小玩意|形成漩涡|轻轻嗡鸣|搅打中|轻轻晃动|工作中|理顺纷乱|增添风味|曲折前行
+`),
+  ja: words(`
+深く探究中|仕上げ中|行動中|実現中|構造を設計中|焼き上げ中|輝いています|ビバップを踊っています|謎について考えています|波立っています|
+湯通し中|熱弁中|軽快に踊っています|ひと工夫中|そっとひと押し|土台づくり中|仕込み中|丸パンづくり中|掘り進めています|計算中|
+仲よく交流中|キャラメルづくり中|流れ落ちています|勢いをためています|頭を働かせています|流れを導いています|周波数を合わせています|振り付け中|かき混ぜ中|発想を練っています|
+ひとつに集約中|思索中|考えを整理中|構成中|演算中|案を練っています|検討中|じっくり考えています|料理中|丁寧に仕上げ中|
+創作中|数値を処理中|結晶化中|育成中|読み解き中|吟味中|方針を決定中|少し寄り道中|考えを揺さぶっています|実行中|
+落書き中|霧雨を降らせています|引き潮の途中|変化を生み出しています|解き明かしています|飾り付け中|魔法をかけています|未来を描いています|蒸発中|発酵中|
+あれこれ調整中|うまく工夫中|フランベ中|おしゃべり中|流れに乗っています|難問と格闘中|羽ばたいています|鍛造中|形づくり中|楽しく遊んでいます|
+糖衣をかけています|気ままに散策中|駆け足中|彩りを添えています|生成中|身振りで表現中|芽吹いています|バージョンを整理中|リズムに乗っています|風を起こしています|
+調和中|ハッシュを計算中|アイデアを育てています|仲間をまとめています|クラクションを鳴らしています|にぎやかに活動中|超空間を移動中|発想中|想像中|即興で対応中|
+温め中|推論中|活力を注入中|イオン化中|スイングを踊っています|浮遊中|のんびり休憩中|姿を現しています|漬け込み中|曲がりくねって進んでいます|
+変身中|霧をつくっています|ムーンウォーク中|ゆっくり歩いています|考えを巡らせています|力を集めています|思いにふけっています|霧状に加工中|巣づくり中|新聞をめくっています|
+アイデアを探っています|核をつくっています|周回中|全体を指揮中|じわじわ吸収中|散歩中|ろ過中|熟読中|哲学を語っています|光合成中|
+花粉を運んでいます|じっくり検討中|意見を述べています|飛びかかっています|降り注いでいます|手品中|処理中|校正中|広めています|細かく手入れ中|
+パズルを解いています|量子の世界を探究中|きらびやかに演出中|華やかさを追加中|考えをまとめ直しています|つながりを編んでいます|止まり木で待機中|熟考中|炒め中|軽快に走っています|
+荷物を運んでいます|忙しく動き回っています|下描き中|滑るように移動中|こね合わせ中|ダンスを楽しんでいます|洞窟を探検中|回転中|発芽中|じっくり煮込み中|
+昇華中|渦巻き中|急降下中|共生中|統合中|調整中|思考中|雷鳴を響かせています|試行錯誤中|おどけながら試しています|
+ひっくり返しています|姿を変えています|性質を変換中|ねじり中|うねっています|広げています|絡まりを解いています|雰囲気を楽しんでいます|よちよち歩き中|気ままに探究中|
+空間を曲げています|あれこれいじっています|渦をつくっています|軽くうなっています|泡立て中|ゆらゆら揺れています|作業中|混乱を整理中|風味を加えています|ジグザグに進んでいます
+`),
+  es: words(`
+Explorando a fondo|Completando|Actuando|Haciendo realidad|Diseñando la estructura|Horneando|Resplandeciendo|Bailando bebop|Desconcertando|Ondeando|
+Escaldando|Discurseando|Bailando|Inventando algo nuevo|Dando un toquecito|Preparando la base|Preparando la mezcla|Haciendo panecillos|Excavando|Calculando|
+Mimando|Caramelizando|Fluyendo en cascada|Catapultando|Razonando|Canalizando|Sintonizando|Coreografiando|Agitando|Dando forma a ideas|
+Convergiendo|Reflexionando|Ordenando las ideas|Componiendo|Computando|Elaborando|Considerando|Contemplando|Cocinando|Dando forma|
+Creando|Procesando números|Cristalizando|Cultivando|Descifrando|Deliberando|Determinando|Tomándose un momento|Revolviendo las ideas|Haciendo|
+Garabateando|Lloviznando|Retrocediendo|Produciendo cambios|Aclarando|Embelleciendo|Encantando|Imaginando el futuro|Evaporando|Fermentando|
+Retocando detalles|Buscando un truco|Flambeando|Charloteando|Fluyendo|Resolviendo una confusión|Revoloteando|Forjando|Formando|Jugando alegremente|
+Añadiendo glaseado|Paseando por ahí|Galopando|Adornando|Generando|Gesticulando|Germinando|Organizando versiones|Siguiendo el ritmo|Soplando|
+Armonizando|Calculando hashes|Incubando ideas|Reuniendo al grupo|Tocando la bocina|Alborotando|Cruzando el hiperespacio|Ideando|Imaginando|Improvisando|
+Incubando|Infiriendo|Infundiendo|Ionizando|Bailando swing|Levitando|Descansando sin prisa|Manifestando|Marinando|Serpenteando|
+Metamorfoseando|Formando neblina|Bailando hacia atrás|Andando sin prisa|Dándole vueltas|Reuniendo fuerzas|Meditando|Nebulizando|Haciendo un nido|Hojeando el periódico|
+Explorando ideas|Formando un núcleo|Orbitando|Orquestando|Absorbiendo por ósmosis|Dando un paseo|Filtrando|Examinando|Filosofando|Haciendo fotosíntesis|
+Polinizando|Pensando con calma|Exponiendo ideas|Lanzándose al ataque|Precipitando|Haciendo magia|Procesando|Revisando|Propagando|Haciendo pequeños ajustes|
+Resolviendo el acertijo|Explorando lo cuántico|Deslumbrando|Dando un toque especial|Reorganizando las ideas|Tejiendo conexiones|Posándose|Rumiando|Salteando|Correteando|
+Cargando cosas|Corriendo de un lado a otro|Esbozando|Deslizándose|Amasando|Bailando en la pista|Explorando cuevas|Girando|Brotando|Cociendo a fuego lento|
+Sublimando|Arremolinando|Lanzándose en picado|Creando simbiosis|Sintetizando|Templando|Pensando|Tronando|Experimentando|Haciendo travesuras|
+Dándole la vuelta a todo|Transfigurando|Transmutando|Retorciendo|Ondulando|Desplegando|Desenredando|Disfrutando el ambiente|Andando como un pato|Vagando|
+Curvando el espacio|Trasteando con algo|Formando un remolino|Zumbando|Batiendo|Balanceándose|Trabajando|Domando el caos|Añadiendo sabor|Zigzagueando
+`),
+  fr: words(`
+Exploration en profondeur|Accomplissement|Passage à l’action|Concrétisation|Conception de la structure|Cuisson au four|Rayonnement|Danse bebop|Questionnement|Ondoiement|
+Blanchiment|Grand discours|Danse entraînante|Petite invention|Petite impulsion|Mise en place des bases|Préparation du mélange|Fabrication de petits pains|Creusement|Calcul|
+Échange affectueux|Caramélisation|Écoulement en cascade|Catapultage|Réflexion active|Canalisation|Mise au diapason|Chorégraphie|Agitation|Créativité en cours|
+Convergence|Cogitation|Organisation des idées|Composition|Calcul informatique|Élaboration|Examen|Contemplation|Cuisine|Façonnage|
+Création|Traitement des chiffres|Cristallisation|Culture|Déchiffrage|Délibération|Détermination|Petite pause|Bousculement des idées|Réalisation|
+Gribouillage|Bruine|Reflux|Mise en œuvre|Éclaircissement|Embellissement|Enchantement|Projection dans l’avenir|Évaporation|Fermentation|
+Petits ajustements|Recherche d’une astuce|Flambage|Bavardage|Écoulement|Résolution d’une énigme|Battement d’ailes|Forge|Formation|Jeu joyeux|
+Ajout de glaçage|Promenade insouciante|Galop|Décoration|Génération|Gestuelle|Germination|Organisation des versions|Mise en rythme|Souffle de vent|
+Harmonisation|Calcul de hachages|Éclosion d’idées|Rassemblement|Coup de klaxon|Remue-ménage|Traversée de l’hyperespace|Recherche d’idées|Imagination|Improvisation|
+Incubation|Déduction|Infusion|Ionisation|Danse swing|Lévitation|Flânerie|Manifestation|Marinade|Cheminement sinueux|
+Métamorphose|Formation de brume|Pas de lune|Marche tranquille|Mûrissement des idées|Mobilisation|Méditation|Nébulisation|Construction d’un nid|Lecture du journal|
+Exploration d’idées|Formation d’un noyau|Mise en orbite|Orchestration|Absorption par osmose|Petite balade|Percolation|Lecture attentive|Philosophie|Photosynthèse|
+Pollinisation|Réflexion posée|Exposé d’idées|Bond en avant|Précipitation|Tour de magie|Traitement|Relecture|Propagation|Petits bricolages|
+Résolution du puzzle|Exploration quantique|Éblouissement|Ajout d’éclat|Réorganisation des idées|Tissage de liens|Installation au perchoir|Rumination|Cuisson sautée|Course légère|
+Transport des affaires|Va-et-vient affairé|Esquisse|Glissement|Malaxage|Danse sur la piste|Exploration de grottes|Rotation|Éclosion|Mijotage|
+Sublimation|Tourbillonnement|Plongeon en vol|Symbiose|Synthèse|Affinage|Réflexion|Tonnerre|Expérimentation|Petite espièglerie|
+Renversement des perspectives|Transfiguration|Transmutation|Torsion|Ondulation|Déploiement|Démêlage|Immersion dans l’ambiance|Démarche de canard|Vagabondage|
+Courbure de l’espace|Bricolage du machin|Formation d’un vortex|Bourdonnement|Fouettage|Balancement|Travail en cours|Maîtrise du chaos|Ajout de saveur|Zigzag
+`),
+  de: words(`
+Tief eintauchen|Abschließen|Handeln|Verwirklichen|Struktur entwerfen|Backen|Strahlen|Bebop tanzen|Rätseln|Aufwallen|
+Blanchieren|Eine Rede halten|Tanzen|Etwas Neues aushecken|Leicht anstupsen|Grundlagen schaffen|Eine Mischung ansetzen|Brötchen backen|Graben|Berechnen|
+Zuwendung zeigen|Karamellisieren|Kaskaden bilden|Katapultieren|Nachdenken|In Bahnen lenken|Sich einstimmen|Choreografieren|Umrühren|Kreativ gestalten|
+Zusammenführen|Grübeln|Gedanken ordnen|Komponieren|Daten berechnen|Ausarbeiten|Abwägen|In Betracht ziehen|Kochen|Gestalten|
+Erschaffen|Zahlen verarbeiten|Kristallisieren|Kultivieren|Entschlüsseln|Beratschlagen|Bestimmen|Kurz verweilen|Gedanken durcheinanderwirbeln|Machen|
+Kritzeln|Nieseln|Zurückweichen|Wirkung entfalten|Erläutern|Verschönern|Verzaubern|Die Zukunft entwerfen|Verdampfen|Fermentieren|
+An Kleinigkeiten feilen|Einen Kniff finden|Flambieren|Plaudern|Fließen|Ein Rätsel knacken|Flattern|Schmieden|Formen|Herumtollen|
+Glasur auftragen|Umherstreifen|Galoppieren|Garnieren|Erzeugen|Gestikulieren|Keimen|Versionen ordnen|In Schwung kommen|Böen erzeugen|
+Harmonisieren|Hashes berechnen|Ideen ausbrüten|Zusammentreiben|Hupen|Trubel machen|Den Hyperraum durchqueren|Ideen entwickeln|Sich etwas vorstellen|Improvisieren|
+Ausbrüten|Schlussfolgern|Durchdringen|Ionisieren|Swing tanzen|Schweben|Gemütlich verweilen|Zum Vorschein bringen|Marinieren|Sich durchschlängeln|
+Sich verwandeln|Nebel bilden|Rückwärts gleiten|Gemächlich gehen|Gedanken kreisen lassen|Kräfte sammeln|Sinnieren|Vernebeln|Ein Nest bauen|In der Zeitung blättern|
+Ideen erkunden|Einen Kern bilden|Umkreisen|Orchestrieren|Durch Osmose aufnehmen|Spazieren gehen|Filtern|Genau durchlesen|Philosophieren|Fotosynthese betreiben|
+Bestäuben|In Ruhe überlegen|Gedanken ausführen|Zum Sprung ansetzen|Ausfällen|Zaubern|Verarbeiten|Korrektur lesen|Verbreiten|Kleine Dinge ausbessern|
+Ein Puzzle lösen|Quanten erkunden|Glanz entfalten|Schwung hineinbringen|Gedanken neu ordnen|Verbindungen knüpfen|Sich niederlassen|Gedanken wiederkäuen|Sautieren|Leichtfüßig laufen|
+Sachen schleppen|Geschäftig umherlaufen|Skizzieren|Gleiten|Zusammenkneten|Auf der Tanzfläche tanzen|Höhlen erkunden|Drehen|Sprießen|Schmoren|
+Sublimieren|Wirbeln|Im Flug herabstoßen|In Symbiose arbeiten|Synthetisieren|Verfeinern|Denken|Donnern|Tüfteln|Schabernack treiben|
+Alles auf den Kopf stellen|Umgestalten|Umwandeln|Verdrehen|Wogen|Entfalten|Entwirren|Die Stimmung genießen|Watscheln|Umherwandern|
+Den Raum krümmen|Am Dingsbums basteln|Einen Strudel bilden|Surren|Aufschlagen|Hin und her wackeln|Arbeiten|Das Durcheinander bändigen|Würze hinzufügen|Im Zickzack gehen
+`),
+  ru: words(`
+Глубоко исследуем|Завершаем|Действуем|Воплощаем|Проектируем структуру|Выпекаем|Сияем|Танцуем бибоп|Разгадываем|Клубимся|
+Бланшируем|Произносим речь|Танцуем|Придумываем затею|Слегка подталкиваем|Закладываем основу|Готовим смесь|Печём булочки|Копаем|Вычисляем|
+Проявляем заботу|Карамелизируем|Струимся каскадом|Катапультируем|Размышляем|Направляем поток|Настраиваемся на волну|Ставим хореографию|Перемешиваем|Творчески подходим|
+Объединяем|Обдумываем|Упорядочиваем мысли|Сочиняем|Считаем|Разрабатываем|Рассматриваем|Созерцаем|Готовим|Придаём форму|
+Создаём|Обрабатываем числа|Кристаллизуем|Выращиваем|Расшифровываем|Взвешиваем варианты|Определяем|Делаем небольшую паузу|Встряхиваем мысли|Делаем|
+Рисуем каракули|Моросим|Отступаем|Добиваемся изменений|Проясняем|Украшаем|Очаровываем|Представляем будущее|Испаряем|Заквашиваем|
+Подправляем мелочи|Ищем хитрый ход|Фламбируем|Болтаем|Течём|Распутываем загадку|Порхаем|Куём|Формируем|Резвимся|
+Наносим глазурь|Гуляем без забот|Скачем галопом|Добавляем украшения|Генерируем|Жестикулируем|Прорастаем|Упорядочиваем версии|Входим в ритм|Создаём порывы ветра|
+Гармонизируем|Вычисляем хеши|Высиживаем идеи|Собираем вместе|Гудим|Устраиваем переполох|Пересекаем гиперпространство|Ищем идеи|Воображаем|Импровизируем|
+Инкубируем|Делаем выводы|Наполняем|Ионизируем|Танцуем свинг|Левитируем|Отдыхаем без спешки|Проявляем|Маринуем|Петляем|
+Преображаемся|Создаём дымку|Танцуем лунную походку|Идём не спеша|Прокручиваем в голове|Собираемся с силами|Погружаемся в раздумья|Распыляем|Строим гнездо|Листаем газету|
+Исследуем идеи|Формируем ядро|Движемся по орбите|Дирижируем|Впитываем постепенно|Прогуливаемся|Фильтруем|Внимательно изучаем|Философствуем|Занимаемся фотосинтезом|
+Опыляем|Неторопливо думаем|Излагаем мысли|Бросаемся вперёд|Осаждаем|Показываем фокус|Обрабатываем|Вычитываем|Распространяем|Занимаемся мелкой починкой|
+Решаем головоломку|Исследуем квантовый мир|Ослепляем блеском|Добавляем яркости|Заново собираем мысли|Сплетаем связи|Усаживаемся на насест|Пережёвываем мысли|Пассеруем|Легко бежим|
+Тащим вещи|Снуём туда-сюда|Набрасываем эскиз|Скользим|Разминаем|Танцуем на площадке|Исследуем пещеры|Вращаемся|Даём ростки|Томим на огне|
+Сублимируем|Кружимся|Пикируем|Работаем в симбиозе|Синтезируем|Закаляем|Думаем|Гремим|Экспериментируем|Озорничаем|
+Переворачиваем всё вверх дном|Меняем облик|Преобразуем|Скручиваем|Колышемся|Разворачиваем|Распутываем|Наслаждаемся атмосферой|Переваливаемся при ходьбе|Бродим|
+Искривляем пространство|Возимся со штуковиной|Создаём водоворот|Жужжим|Взбиваем|Покачиваемся|Работаем|Укрощаем хаос|Добавляем изюминку|Идём зигзагом
+`)
+};
+
+
+function spinnerLocale(id = 'en') {
+  const primary = String(id).toLowerCase().split('-')[0];
+  return SPINNER_LANGUAGES.includes(primary) ? primary : 'en';
+}
+function spinnerText(locale, key, parameters = {}) {
+  const dictionary = SPINNER_TRANSLATIONS[spinnerLocale(locale)];
+  const template = Object.hasOwn(dictionary, key) ? dictionary[key] : Object.hasOwn(SPINNER_TRANSLATIONS.en, key) ? SPINNER_TRANSLATIONS.en[key] : String(key);
+  return template.replace(/\{(\w+)\}/g, (all, name) => Object.hasOwn(parameters, name) ? String(parameters[name]) : all);
+}
+function isBuiltInVerbs(list) {
+  return Array.isArray(list) && list.length === DEFAULTS.verbs.length && list.every((word, index) => word === DEFAULTS.verbs[index]);
+}
+function displaySpinnerVerbs(list, locale) {
+  if (!isBuiltInVerbs(list)) return list;
+  return SPINNER_VERBS[spinnerLocale(locale)] ?? list;
+}
+function spinnerEditorText(text, locale) {
+  return text === DEFAULTS.verbs.join('\n') ? displaySpinnerVerbs(DEFAULTS.verbs, locale).join('\n') : text;
+}
+function canonicalSpinnerEditorText(text, locale) {
+  return text === displaySpinnerVerbs(DEFAULTS.verbs, locale).join('\n') ? DEFAULTS.verbs.join('\n') : text;
+}
+const elapsedFormatters = new Map();
+function spinnerElapsed(milliseconds, locale) {
+  const language = spinnerLocale(locale);
+  if (!elapsedFormatters.has(language)) elapsedFormatters.set(language, {
+    minute: new Intl.NumberFormat(language, { style:'unit', unit:'minute', unitDisplay:'short' }),
+    second: new Intl.NumberFormat(language, { style:'unit', unit:'second', unitDisplay:'short' }),
+  });
+  const format = elapsedFormatters.get(language);
+  const seconds = Math.max(1, Math.floor((Number.isFinite(milliseconds) ? milliseconds : 0) / 1000));
+  return seconds < 60 ? format.second.format(seconds) : `${format.minute.format(Math.floor(seconds / 60))} ${format.second.format(seconds % 60)}`;
+}
+// Keep a message key in state, never a translation or an untrusted server diagnostic.
+function spinnerNotice(error, fallback = 'failed') {
+  return spinnerErrorKey(error, fallback);
+}
+
+function createPlugin(React) {
+  const h = React.createElement;
+  const NS = 'spinner-studio';
   const UI_CSS = `.dss-gif{background:currentColor;color:${SPINNER_ACCENT};mask:var(--dss-gif) center/contain no-repeat}.dss-gallery-title{font-size:14px;font-weight:500;margin:0}.dss-gallery .dss-option-icon{margin-bottom:10px}@media(prefers-reduced-motion:reduce){.dss-gif{mask-image:var(--dss-gif-still)}}.dss-panel{max-width:780px;margin:0 auto;color:var(--dsw-alias-label-primary);font-size:14px;line-height:1.6;padding:8px 0 28px}.dss-panel h2{font-size:20px;font-weight:600;margin:0 0 6px}.dss-panel p{margin:0 0 16px;color:var(--dsw-alias-label-secondary)}.dss-preview{padding:22px;border:1px solid var(--dsw-alias-border-l1);border-radius:12px;background:var(--dsw-alias-bg-layer-1);margin:20px 0}.dss-preview-label{display:block;color:var(--dsw-alias-label-tertiary);font-size:12px;margin-bottom:12px}.dss-preview-line{display:flex;align-items:center;gap:10px;color:${SPINNER_ACCENT};font-size:16px;min-height:40px;overflow-wrap:anywhere}.dss-preview-line img{object-fit:contain}.dss-row{display:flex;align-items:center;justify-content:space-between;gap:20px;padding:16px 0;border-bottom:1px solid var(--dsw-alias-border-l1)}.dss-row small{display:block;color:var(--dsw-alias-label-tertiary);font-size:12px;margin-top:4px}.dss-block{display:block}.dss-panel input:not([type=checkbox]):not([type=range]):not([type=file]),.dss-panel textarea{box-sizing:border-box;color:var(--dsw-alias-label-primary);background:var(--dsw-alias-bg-layer-1);border:1px solid var(--dsw-alias-border-l2);border-radius:8px;padding:9px 12px;font:inherit}.dss-panel textarea{width:100%;min-height:240px;resize:vertical;margin-top:12px;font-size:13px}.dss-panel input[type=number]{width:84px}.dss-panel input[type=checkbox],.dss-panel input[type=range]{accent-color:${SPINNER_ACCENT}}.dss-panel input[type=checkbox]{width:34px;height:20px;cursor:pointer}.dss-panel input[type=file]{max-width:100%;margin:12px 0;font:inherit}.dss-panel input:focus-visible,.dss-panel textarea:focus-visible,.dss-panel button:focus-visible,.dss-panel a:focus-visible{outline:2px solid ${SPINNER_ACCENT};outline-offset:3px}.dss-options{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:8px;margin:12px 0}.dss-panel button{cursor:pointer;color:var(--dsw-alias-label-primary);background:var(--dsw-alias-bg-layer-1);border:1px solid var(--dsw-alias-border-l2);border-radius:8px;min-height:36px;padding:7px 12px;font:inherit;line-height:20px}.dss-panel button:hover{background:var(--dsw-alias-bg-layer-2)}.dss-options button[aria-pressed=true]{border-color:${SPINNER_ACCENT};color:${SPINNER_ACCENT};background:var(--dsw-alias-bg-layer-2)}.dss-panel button:disabled{opacity:.55;cursor:default}.dss-actions{display:flex;flex-wrap:wrap;gap:8px;align-items:center;margin:16px 0}.dss-panel .dss-primary{background:var(--dsw-alias-button-primary-fill);color:var(--dsw-alias-label-primary-foreground);border-color:var(--dsw-alias-button-primary-fill)}.dss-feedback{min-height:24px;color:var(--dsw-alias-state-success-primary)}.dss-error{color:var(--dsw-alias-state-error-primary)}.dss-panel a{color:${SPINNER_ACCENT}}.dss-inline{display:flex;gap:10px;align-items:center}.dss-panel .dss-note{font-size:12px;color:var(--dsw-alias-label-tertiary);margin:8px 0}.dss-icon{display:inline-flex;align-items:center;justify-content:center;flex-shrink:0}.dss-option-icon{display:flex;justify-content:center;margin:0 auto 5px}@media(max-width:540px){.dss-row{gap:12px}.dss-options{grid-template-columns:repeat(2,minmax(0,1fr))}.dss-panel input[type=range]{width:100px}.dss-actions button{flex:1}}`;
 
   return {
     inject: ['slots', 'locale'],
     apply(ctx) {
-      ctx.effect(() => ctx.locale.register(NS, { en: EN, zh: EN, pt: PT, 'pt-BR': PT }));
+      ctx.effect(() => ctx.locale.register(NS, SPINNER_TRANSLATIONS));
       const t = ctx.locale.bind(NS);
       let current = null;
       const subscribers = new Set();
@@ -137,7 +451,7 @@ function createPlugin(React) {
           const response = await fetch('api/plugins/spinner-studio', { credentials: 'same-origin', cache: 'no-store', signal: controller.signal,
             ...(input ? { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(input) } : {}) });
           const value = await response.json();
-          if (!response.ok || value.error) throw new Error(value.error || t('failed'));
+          if (!response.ok || value.error) throw spinnerError(spinnerNotice({code:value.errorCode, message:value.error}), 'Spinner request failed.');
           if (!disposed) publish(value.preferences);
           return value.preferences;
         } finally { clearTimeout(timeout); requests.delete(controller); }
@@ -161,16 +475,17 @@ function createPlugin(React) {
         return h('svg', { viewBox:'0 0 24 24', width:size, height:size, 'aria-hidden':true, fill:'none', stroke:'currentColor', strokeWidth:1.6, strokeLinecap:'round', strokeLinejoin:'round' }, h('path', { d:PATHS[p.icon] }));
       }
       function Preview({ preferences: p }) {
+        const locale = useLocale();
         const [tick, setTick] = React.useState(0);
         React.useEffect(() => { const timer = setInterval(() => setTick(v => v + 1), 1000); return () => clearInterval(timer); }, []);
-        const list = p.verbs?.length ? p.verbs : DEFAULTS.verbs;
+        const list = displaySpinnerVerbs(p.verbs?.length ? p.verbs : DEFAULTS.verbs, locale.active);
         const word = list[Math.floor(tick / (p.interval || 6)) % list.length];
         return h('div', { className:'dss-preview' },
           h('span', { className:'dss-preview-label' }, t('preview')),
-          h('div', { className:'dss-preview-line', 'aria-hidden':true }, h(Icon, { preferences:p }), h('span', null, word, ' · ', durationLabel((138 + tick) * 1000), ' ···')));
+          h('div', { className:'dss-preview-line', 'aria-hidden':true }, h(Icon, { preferences:p }), h('span', null, word, ' · ', spinnerElapsed((138 + tick) * 1000, locale.active), ' ···')));
       }
       function Panel() {
-        useLocale();
+        const locale = useLocale();
         const saved = usePreferences();
         const [draft, setDraft] = React.useState(null);
         const [text, setText] = React.useState('');
@@ -184,33 +499,33 @@ function createPlugin(React) {
         React.useEffect(() => { alive.current = true; return () => { alive.current = false; uploadSequence.current++; }; }, []);
         const adopt = React.useCallback(p => { setDraft(p); setText(p.verbs.join('\n')); setDirty(false); }, []);
         React.useEffect(() => { if (saved && !dirty) adopt(saved); }, [saved, dirty, adopt]);
-        React.useEffect(() => { let active = true; request().then(() => { if (active) setLoaded(true); }, e => { if (active) { setError(t('unread') + ' ' + e.message); setLoaded(true); } }); return () => { active = false; }; }, []);
+        React.useEffect(() => { let active = true; request().then(() => { if (active) setLoaded(true); }, e => { if (active) { setError(spinnerNotice(e, 'unread')); setLoaded(true); } }); return () => { active = false; }; }, []);
         const update = patch => { setDraft(p => ({ ...p, ...patch })); setDirty(true); setMessage(''); setError(''); };
-        const refresh = async () => { setError(''); try { const p = await request(); if (alive.current) { adopt(p); setLoaded(true); } } catch (e) { if (alive.current) setError(t('unread') + ' ' + e.message); } };
+        const refresh = async () => { setError(''); try { const p = await request(); if (alive.current) { adopt(p); setLoaded(true); } } catch (e) { if (alive.current) setError(spinnerNotice(e, 'unread')); } };
         async function upload(event) {
           const file = event.target.files?.[0];
           const sequence = ++uploadSequence.current;
           event.target.value = '';
           if (!file) return;
           try {
-            if (!['image/png','image/jpeg','image/webp','image/gif'].includes(file.type) || file.size > 250 * 1024) throw new Error(t('imageError'));
-            const data = await new Promise((resolve, reject) => { const reader = new FileReader(); reader.onload = () => resolve(reader.result); reader.onerror = () => reject(new Error(t('imageError'))); reader.readAsDataURL(file); });
+            if (!['image/png','image/jpeg','image/webp','image/gif'].includes(file.type) || file.size > 250 * 1024) throw spinnerError('imageError', 'Image could not be loaded.');
+            const data = await new Promise((resolve, reject) => { const reader = new FileReader(); reader.onload = () => resolve(reader.result); reader.onerror = () => reject(spinnerError('imageError', 'Image could not be loaded.')); reader.readAsDataURL(file); });
             // Decode the actual file before accepting an icon (not just its MIME label).
-            await new Promise((resolve, reject) => { const image = new Image(); image.onload = resolve; image.onerror = () => reject(new Error(t('imageError'))); image.src = data; });
+            await new Promise((resolve, reject) => { const image = new Image(); image.onload = resolve; image.onerror = () => reject(spinnerError('imageError', 'Image could not be loaded.')); image.src = data; });
             if (alive.current && sequence === uploadSequence.current) update({ icon:'image', image:data });
-          } catch (e) { if (alive.current && sequence === uploadSequence.current) setError(e.message); }
+          } catch (e) { if (alive.current && sequence === uploadSequence.current) setError(spinnerNotice(e)); }
         }
         async function save() {
           setError(''); setMessage('');
           let p;
           try { p = validatePreferences({ ...draft, verbs:text.split(/\r?\n/u).map(v => v.trim()).filter(Boolean) }); }
-          catch (e) { setError(e.message); return; }
+          catch (e) { setError(spinnerNotice(e)); return; }
           setBusy(true);
-          try { const accepted = await request({ action:'update', patch:p }); if (alive.current) { adopt(accepted); setMessage(t('saved')); } }
-          catch (e) { if (alive.current) setError(t('failed') + ' ' + e.message); }
+          try { const accepted = await request({ action:'update', patch:p }); if (alive.current) { adopt(accepted); setMessage('saved'); } }
+          catch (e) { if (alive.current) setError(spinnerNotice(e)); }
           finally { if (alive.current) setBusy(false); }
         }
-        if (!draft) return h('section', { className:'dss-panel' }, h('style', null, UI_CSS), h('h2', null, t('title')), h('p', { role:'status' }, error || t('loading')), loaded && h('button', { onClick:refresh }, t('retry')));
+        if (!draft) return h('section', { className:'dss-panel' }, h('style', null, UI_CSS), h('h2', null, t('title')), h('p', { role:'status' }, error ? t(error) : t('loading')), loaded && h('button', { onClick:refresh }, t('retry')));
         const preview = { ...draft, verbs:text.split(/\r?\n/u).map(v=>v.trim()).filter(Boolean) };
         const row = (id, title, help, control) => h('div', { className:'dss-row', key:id }, h('div', null, h('label', { htmlFor:id }, title), help && h('small', null, help)), control);
         return h('section', { className:'dss-panel' }, h('style', null, UI_CSS),
@@ -227,11 +542,11 @@ function createPlugin(React) {
             draft.icon==='image' && h('div', { className:'dss-row dss-block' }, h('label', { htmlFor:'dss-upload' }, t('upload')), h('small', null, t('uploadHelp')), h('input', { id:'dss-upload', type:'file', accept:'image/png,image/jpeg,image/webp,image/gif', onChange:upload }), !draft.image && h('small', null, t('selectImage'))),
             row('dss-size', t('size'), null, h('span', { className:'dss-inline' }, h('input', { id:'dss-size', type:'range', min:12, max:40, value:draft.size, onChange:e=>update({size:Number(e.target.value)}) }), h('output', { htmlFor:'dss-size' }, draft.size+' px'))),
             row('dss-interval', t('interval'), null, h('span', { className:'dss-inline' }, h('input', { id:'dss-interval', type:'number', min:2, max:60, value:draft.interval, onChange:e=>update({interval:Number(e.target.value)}) }), t('seconds'))),
-            h('div', { className:'dss-row dss-block' }, h('label', { htmlFor:'dss-verbs' }, t('verbs')), h('small', null, t('verbsHelp')), h('textarea', { id:'dss-verbs', value:text, spellCheck:false, maxLength:40500, onChange:e=>{setText(e.target.value);setDirty(true);setMessage('');} }),
-              h('div', { className:'dss-actions' }, h('small', null, t('count', {count:new Set(preview.verbs).size})), h('button', { type:'button', onClick:()=>{setText(DEFAULTS.verbs.join('\n'));setDirty(true);setMessage('');} }, t('claude'))))
+            h('div', { className:'dss-row dss-block' }, h('label', { htmlFor:'dss-verbs' }, t('verbs')), h('small', null, t('verbsHelp')), h('textarea', { id:'dss-verbs', value:spinnerEditorText(text, locale.active), spellCheck:false, maxLength:40500, onChange:e=>{setText(canonicalSpinnerEditorText(e.target.value, locale.active));setDirty(true);setMessage('');setError('');} }),
+              h('div', { className:'dss-actions' }, h('small', null, t('count', {count:new Set(preview.verbs).size})), h('button', { type:'button', onClick:()=>{setText(DEFAULTS.verbs.join('\n'));setDirty(true);setMessage('');setError('');} }, t('claude'))))
           ),
           h('div', { className:'dss-actions' }, h('button', { className:'dss-primary', disabled:busy||!dirty, onClick:save }, t(busy?'saving':'save')), h('button', { disabled:busy||!dirty, onClick:()=>{adopt(saved);setMessage('');setError('');} }, t('cancel')), h('button', { disabled:busy, onClick:()=>{setDraft({...DEFAULTS});setText(DEFAULTS.verbs.join('\n'));setDirty(true);setMessage('');setError('');} }, t('defaults'))),
-          h('div', { className:'dss-feedback'+(error?' dss-error':''), role:error?'alert':'status' }, error || message || (dirty?t('changed'):'')),
+          h('div', { className:'dss-feedback'+(error?' dss-error':''), role:error?'alert':'status' }, error ? t(error) : message ? t(message) : dirty ? t('changed') : ''),
           h('p', { className:'dss-note' }, t('global')), h('p', { className:'dss-note' }, t('compatibility')),
           h('a', { href:'https://github.com/shanraisshan/claude-code-best-practice/blob/main/reports/claude-spinner-verbs-and-tips.md', target:'_blank', rel:'noopener noreferrer' }, t('source')));
       }
@@ -257,8 +572,8 @@ function createPlugin(React) {
         }, [p?.enabled, running, start]);
         if (!p?.enabled || !running) return null;
         const elapsed = Number.isFinite(start) ? Math.max(0, now-start) : 0;
-        const word = selectVerb(p.verbs, turn, elapsed, p.interval);
-        return h('style', { 'data-spinner-studio':props.sessionId }, spinnerCSS(p, word, start===undefined?'':durationLabel(elapsed), locale.active.startsWith('pt')));
+        const word = selectVerb(displaySpinnerVerbs(p.verbs, locale.active), turn, elapsed, p.interval);
+        return h('style', { 'data-spinner-studio':props.sessionId }, spinnerCSS(p, word, '', false, start===undefined ? word : t('runningLabel', {verb:word, duration:spinnerElapsed(elapsed, locale.active)})));
       }
       ctx.slots.inject('settings.section', () => ctx.slots.register({ name:'settings.section', id:'spinner-studio', order:44, label:()=>t('title'), locale:NS }, Panel));
       ctx.slots.inject('settings.section.icon', () => ctx.slots.register({ name:'settings.section.icon', id:'spinner-studio' }, () => h(Icon, { preferences:{...DEFAULTS,icon:'spark'}, size:18 })));
