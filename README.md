@@ -10,7 +10,7 @@ An independent community plugin, not an official DeepSeek or Anthropic product.
 
 ## Install from GitHub
 
-Requires **DeepSeek Harness `0.2.2-rc.1` or `0.2.2-rc.2`** and **Node.js 24.11+**. No other DSH release is declared compatible.
+Requires **DeepSeek Harness `>=0.2.2-rc.1 <0.2.3-0`** and **Node.js 24.11+**. The range admits rc.3, later 0.2.2 release candidates and stable 0.2.2; it excludes 0.2.3, including its prereleases.
 
 **Web profile**
 
@@ -65,13 +65,17 @@ A custom icon, activity verb and elapsed time appear while the agent works. This
 
 ## Compatibility and limitations
 
-The declared range is exactly `0.2.2-rc.1 || 0.2.2-rc.2`. Runtime contracts and Client registrations were checked on macOS Desktop. This is not cross-platform visual certification.
+The declared range is `>=0.2.2-rc.1 <0.2.3-0`, rather than an allowlist that blocks every new 0.2.2 release candidate. The rc.3 compatibility review checks installed locale, slot, chat, tool, connection and configuration-editor contracts; no feature, asset or saved-preference migration is part of this metadata change. Admission of future 0.2.2 builds is a compatibility policy, not proof that their APIs or visuals cannot change. Earlier runtime and Client registration checks were on macOS Desktop, not cross-platform visual certification.
 
 There is no dedicated native icon/text slot. The plugin adds `settings.section` and a `conversation.composer.dock` adapter that renders a lifecycle-owned React `style` element. It targets the semantic `[data-chat-running]` marker, not hashed class names. It does not replace the root, chat flow, messages, approvals or renderers, or observe/mutate the DOM. Timeline projections provide elapsed time.
 
 The adapter is for the **main chat**. Multiple chats mounted in one document are not CSS-isolated by session and may share the last-mounted verb/time styling. Native holding/accessible status and conversation controls are preserved. The whale preview is illustrative; chat retains the native animated whale. A future change to the indicator markup may require a plugin update.
 
 The user-provided screenshots illustrate the English interface; they are not automated browser captures or certification of the latest local translations. Automated logic/resource tests and live registration checks do not certify rendered light/dark appearance, animation or actual pointer/keyboard interactions; check those in your running Harness.
+
+## Compatibility metadata checks (2026-11-13)
+
+With managed Node.js 24.21.0, `npm run build`, `npm run check` and `npm test` completed: **34 tests passed, 0 failed**, including the new manifest/lockfile/documentation consistency regression. The rebuild left tracked Client artifacts unchanged. These checks did not install the plugin, change a profile or exercise the live browser.
 
 ## Reproducible checks and real output
 
@@ -113,4 +117,4 @@ For publication, make this repository public and add GitHub topic **`dsh-plugin`
 
 ## Português
 
-Abra **Configurações → Indicador de atividade**, personalize o ícone/verbos e salve. Preferências ficam no perfil e valem para todas as sessões; não há chamadas de IA, CDN nem telemetria do plugin. Para instalar, use o comando GitHub do perfil acima, não o nome npm. Compatibilidade somente rc.1/rc.2; a conferência visual na sua instalação continua necessária.
+Abra **Configurações → Indicador de atividade**, personalize o ícone/verbos e salve. Preferências ficam no perfil e valem para todas as sessões; não há chamadas de IA, CDN nem telemetria do plugin. Para instalar, use o comando GitHub do perfil acima, não o nome npm. Compatibilidade declarada `>=0.2.2-rc.1 <0.2.3-0`: inclui rc.3 e futuros candidatos da série 0.2.2, mas exclui 0.2.3, inclusive prévias. Isso não garante APIs futuras imutáveis; a conferência visual na sua instalação continua necessária.

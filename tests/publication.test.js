@@ -18,8 +18,19 @@ test('public source identity retains private npm guard and exact runtime bounds'
   assert.equal(manifest.homepage, `https://github.com/${repo}#readme`);
   assert.equal(manifest.bugs.url, `https://github.com/${repo}/issues`);
   assert.ok(manifest.keywords.includes('dsh-plugin'));
-  assert.equal(manifest.engines.dsh, '0.2.2-rc.1 || 0.2.2-rc.2');
+  assert.equal(manifest.engines.dsh, '>=0.2.2-rc.1 <0.2.3-0');
   assert.equal(JSON.parse(read('package-lock.json')).packages[''].license, 'MIT');
+});
+
+test('controlled 0.2.2 admission stays consistent across release metadata', () => {
+  const lock = JSON.parse(read('package-lock.json'));
+  assert.deepEqual(lock.packages[''].engines, manifest.engines);
+  assert.deepEqual(lock.packages[''].dependencies, manifest.dependencies);
+  const readme = read('README.md');
+  assert.ok(readme.includes(`\`${manifest.engines.dsh}\``));
+  assert.ok(readme.includes('excludes 0.2.3, including its prereleases'));
+  assert.ok(!readme.includes('0.2.2-rc.1 || 0.2.2-rc.2'));
+  assert.equal(manifest.dependencies['@deepseek-ai/schemastery'], '~3.19.0');
 });
 
 test('GitHub distribution retains build-free artifacts and lifecycle script safety', () => {

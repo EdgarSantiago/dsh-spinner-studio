@@ -89,7 +89,7 @@ test('request parser bounds actual bytes, rejects wrong types and malformed JSON
 });
 test('distribution exports and localized metadata exist with an original small SVG', async () => {
   const manifest = JSON.parse(await readFile(new URL('../package.json',import.meta.url),'utf8'));
-  assert.equal(manifest.engines.dsh, '0.2.2-rc.1 || 0.2.2-rc.2');
+  assert.equal(manifest.engines.dsh, '>=0.2.2-rc.1 <0.2.3-0');
   const lock = JSON.parse(await readFile(new URL('../package-lock.json',import.meta.url),'utf8'));
   assert.equal(lock.packages[''].engines.dsh, manifest.engines.dsh);
   for (const [key, value] of Object.entries(manifest.exports)) {
